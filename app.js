@@ -424,7 +424,7 @@
     if (modal === 'setup') {
       return '<div class="modal-overlay" onclick="if(event.target===this) __closeModal()">' +
         '<div class="modal">' +
-        '<h3>Set up admin access</h3>' +
+        '<h3>Hari</h3>' +
         '<p class="hint">Choose a password to protect editing. This is a light gate for a personal site, not bank-grade security — don\'t reuse an important password here.</p>' +
         '<label>New password</label><input type="password" id="setup-pass" onkeydown="if(event.key===\'Enter\') document.getElementById(\'setup-confirm\').focus()">' +
         '<label>Confirm password</label><input type="password" id="setup-confirm" onkeydown="if(event.key===\'Enter\') __handleSetup(document.getElementById(\'setup-pass\').value, this.value)">' +
@@ -438,7 +438,7 @@
     }
     return '<div class="modal-overlay" onclick="if(event.target===this) __closeModal()">' +
       '<div class="modal">' +
-      '<h3>Admin login</h3>' +
+      '<h3>Hari</h3>' +
       '<p class="hint">Enter your password to edit the site.</p>' +
       '<label>Password</label><input type="password" id="login-pass" onkeydown="if(event.key===\'Enter\') __handleLogin(this.value)">' +
       '<div class="err" id="modal-err"></div>' +
@@ -460,7 +460,7 @@
     html += '<div class="dock-divider"></div>';
     html += isAdmin
       ? '<button class="dock-item" onclick="__logout()"><span class="dock-arrow">&#9656;</span><span class="dock-label">Log out</span><span class="dock-dot"></span></button>'
-      : '<button class="dock-item" onclick="__openAdmin()"><span class="dock-arrow">&#9656;</span><span class="dock-label">Admin</span><span class="dock-dot"></span></button>';
+      : '<button class="dock-item" onclick="__openAdmin()"><span class="dock-arrow">&#9656;</span><span class="dock-label">Hari</span><span class="dock-dot"></span></button>';
     html += '</nav>';
     return html;
   }
