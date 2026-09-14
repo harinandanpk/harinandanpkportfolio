@@ -17,9 +17,13 @@
   var AUTH_DOC = db.collection('portfolio').doc('admin');
   // =====================================================================
 
+  var LOCAL_STORAGE_KEY = 'harinandan_portfolio_data';
+  var LOCAL_AUTH_KEY = 'harinandan_portfolio_auth';
+  var SESSION_ADMIN_KEY = 'harinandan_portfolio_is_admin';
+
   var defaultState = {
     name: "P K HARINANDAN",
-    role: "BCA graduate, learning web development and more to increase my knowledge and practical experience. Open to internship opportunities.",
+    role: "BCA graduate, learning web development and DSA. Open to internship opportunities.",
     about: "I'm a BCA graduate building my skills in web development. Right now I'm working through HTML, CSS, JavaScript and Python, and picking up data structures & algorithms along the way. I'm looking for an internship where I can apply what I'm learning, contribute to real projects, and keep growing as a developer.",
     skills: [
       { category: "Languages", items: ["HTML", "CSS", "JavaScript", "Python"] },
@@ -44,6 +48,10 @@
   var editingProjectId = null;
   var modal = null;
   var activeSection = 'home';
+  var hasLoadedInitial = false;
+  var revealedSections = {};
+  var scrollSpyObserver = null;
+  var ambientInitialized = false;
 
   function uid() { return Math.random().toString(36).slice(2, 9); }
 
@@ -54,40 +62,73 @@
   }
 
   async function loadData() {
+    var localSaved = localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (localSaved) {
+      try { state = JSON.parse(localSaved); } catch (e) { console.error(e); }
+    }
+    if (!state) {
+      state = JSON.parse(JSON.stringify(defaultState));
+    }
+
     try {
       var docSnap = await CONTENT_DOC.get();
       if (docSnap.exists) {
         state = docSnap.data().payload;
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(state));
       } else {
-        state = JSON.parse(JSON.stringify(defaultState));
         await CONTENT_DOC.set({ payload: state });
       }
     } catch (e) {
-      console.error(e);
-      state = JSON.parse(JSON.stringify(defaultState));
+      console.warn("Firestore sync offline or restricted; using local storage state.", e);
     }
+
+    if (sessionStorage.getItem(SESSION_ADMIN_KEY) === 'true') {
+      isAdmin = true;
+    }
+
     render();
-    setupScrollSpy();
-    setupReveal();
+    hasLoadedInitial = true;
     setupAmbient();
   }
 
   async function saveData() {
-    try { await CONTENT_DOC.set({ payload: state }); }
-    catch (e) { console.error(e); alert('Could not save — check your internet connection and try again.'); }
+    try {
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(state));
+    } catch (e) {
+      console.error('LocalStorage save error:', e);
+    }
+
+    try {
+      await CONTENT_DOC.set({ payload: state });
+    } catch (e) {
+      console.warn('Firestore save offline or restricted; changes saved locally.', e);
+    }
   }
 
   async function getAuthHash() {
+    var localHash = localStorage.getItem(LOCAL_AUTH_KEY);
+    if (localHash) return localHash;
     try {
       var docSnap = await AUTH_DOC.get();
-      return docSnap.exists ? docSnap.data().hash : null;
-    } catch (e) { console.error(e); return null; }
+      if (docSnap.exists) {
+        var hash = docSnap.data().hash;
+        localStorage.setItem(LOCAL_AUTH_KEY, hash);
+        return hash;
+      }
+    } catch (e) {
+      console.warn('Auth Firestore fetch error:', e);
+    }
+    return null;
   }
 
   function esc(s) {
-    var d = document.createElement('div');
-    d.textContent = s == null ? '' : s;
-    return d.innerHTML;
+    if (s == null) return '';
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   function scrollTo(id) {
@@ -112,26 +153,44 @@
     var hash = await sha256(pass);
     var stored = await getAuthHash();
     var errEl = document.getElementById('modal-err');
-    if (stored && hash === stored) { isAdmin = true; modal = null; render(); }
-    else if (errEl) { errEl.textContent = 'Wrong password.'; }
+    if (stored && hash === stored) {
+      isAdmin = true;
+      sessionStorage.setItem(SESSION_ADMIN_KEY, 'true');
+      modal = null;
+      render();
+    } else if (errEl) {
+      errEl.textContent = 'Wrong password.';
+    }
   }
   window.__handleLogin = handleLogin;
 
   async function handleSetup(pass, confirmPass) {
     var errEl = document.getElementById('modal-err');
-    if (pass.length < 4) { if (errEl) errEl.textContent = 'Use at least 4 characters.'; return; }
+    if (!pass || pass.length < 4) { if (errEl) errEl.textContent = 'Use at least 4 characters.'; return; }
     if (pass !== confirmPass) { if (errEl) errEl.textContent = 'Passwords do not match.'; return; }
     var hash = await sha256(pass);
+    localStorage.setItem(LOCAL_AUTH_KEY, hash);
+    sessionStorage.setItem(SESSION_ADMIN_KEY, 'true');
+    isAdmin = true;
+    modal = null;
+    render();
     try {
       await AUTH_DOC.set({ hash: hash });
-      isAdmin = true; modal = null; render();
-    } catch (e) { console.error(e); if (errEl) errEl.textContent = 'Could not save password — try again.'; }
+    } catch (e) {
+      console.warn('Could not save password to Firestore (saved locally)', e);
+    }
   }
   window.__handleSetup = handleSetup;
 
-  function logout() { isAdmin = false; editingSection = null; render(); }
+  function logout() {
+    isAdmin = false;
+    editingSection = null;
+    editingProjectId = null;
+    modal = null;
+    sessionStorage.removeItem(SESSION_ADMIN_KEY);
+    render();
+  }
   window.__logout = logout;
-
 
   async function openAdmin() {
     var stored = await getAuthHash();
@@ -139,13 +198,30 @@
   }
   window.__openAdmin = openAdmin;
 
-  function setEditing(section) { editingSection = section; render(); }
+  function setEditing(section) {
+    editingSection = section;
+    editingProjectId = null;
+    render();
+    if (section) scrollTo(section);
+  }
   window.__setEditing = setEditing;
 
   async function saveAbout(newAbout, newRole) {
-    state.about = newAbout; state.role = newRole; editingSection = null; render(); await saveData();
+    state.about = newAbout;
+    state.role = newRole;
+    editingSection = null;
+    render();
+    await saveData();
   }
   window.__saveAbout = saveAbout;
+
+  window.__submitAboutForm = function () {
+    var roleEl = document.getElementById('about-role');
+    var textEl = document.getElementById('about-text');
+    var newRole = roleEl ? roleEl.value.trim() : state.role;
+    var newAbout = textEl ? textEl.value.trim() : state.about;
+    saveAbout(newAbout, newRole);
+  };
 
   function addSkillCategory() { state.skills.push({ category: 'New category', items: [] }); render(); }
   window.__addSkillCategory = addSkillCategory;
@@ -154,8 +230,12 @@
   function renameSkillCategory(idx, val) { state.skills[idx].category = val; }
   window.__renameSkillCategory = renameSkillCategory;
   function addSkillItem(idx, input) {
-    var val = input.value.trim(); if (!val) return;
-    state.skills[idx].items.push(val); input.value = ''; render();
+    if (!input) return;
+    var val = input.value.trim();
+    if (!val) return;
+    state.skills[idx].items.push(val);
+    input.value = '';
+    render();
   }
   window.__addSkillItem = addSkillItem;
   function removeSkillItem(catIdx, itemIdx) { state.skills[catIdx].items.splice(itemIdx, 1); render(); }
@@ -163,8 +243,13 @@
   async function saveSkills() { editingSection = null; render(); await saveData(); }
   window.__saveSkills = saveSkills;
 
-  function newProjectDraft() { return { id: 'new', title: '', desc: '', tech: '', link: '' }; }
-  function startEditProject(id) { editingProjectId = id; render(); }
+  function newProjectDraft() { return { id: 'new', title: '', desc: '', tech: [], link: '' }; }
+  function startEditProject(id) {
+    editingProjectId = id;
+    editingSection = null;
+    render();
+    scrollTo('projects');
+  }
   window.__startEditProject = startEditProject;
   function cancelEditProject() { editingProjectId = null; render(); }
   window.__cancelEditProject = cancelEditProject;
@@ -192,10 +277,10 @@
   function projectForm(proj) {
     return (
       '<div class="proj-item">' +
-      '<label>Title</label><input type="text" id="pf-title" value="' + esc(proj.title) + '">' +
+      '<label>Title</label><input type="text" id="pf-title" value="' + esc(proj.title) + '" onkeydown="if(event.key===\'Enter\') event.preventDefault()">' +
       '<label>Description</label><textarea id="pf-desc" style="min-height:70px">' + esc(proj.desc || '') + '</textarea>' +
-      '<label>Tech used (comma separated)</label><input type="text" id="pf-tech" value="' + esc((proj.tech || []).join ? proj.tech.join(', ') : proj.tech || '') + '">' +
-      '<label>Link (optional)</label><input type="text" id="pf-link" value="' + esc(proj.link || '') + '">' +
+      '<label>Tech used (comma separated)</label><input type="text" id="pf-tech" value="' + esc((proj.tech || []).join ? proj.tech.join(', ') : proj.tech || '') + '" onkeydown="if(event.key===\'Enter\') event.preventDefault()">' +
+      '<label>Link (optional)</label><input type="text" id="pf-link" value="' + esc(proj.link || '') + '" onkeydown="if(event.key===\'Enter\') event.preventDefault()">' +
       '<div class="save-row">' +
       '<button class="btn btn-solid-light" onclick="__submitProjectForm(\'' + proj.id + '\')">Save project</button>' +
       '<button class="btn btn-ghost-light" onclick="__cancelEditProject()">Cancel</button>' +
@@ -204,11 +289,16 @@
     );
   }
   window.__submitProjectForm = function (id) {
+    var titleEl = document.getElementById('pf-title');
+    var descEl = document.getElementById('pf-desc');
+    var techEl = document.getElementById('pf-tech');
+    var linkEl = document.getElementById('pf-link');
+    if (!titleEl || !descEl || !techEl || !linkEl) return;
     var data = {
-      title: document.getElementById('pf-title').value.trim(),
-      desc: document.getElementById('pf-desc').value.trim(),
-      tech: document.getElementById('pf-tech').value,
-      link: document.getElementById('pf-link').value.trim()
+      title: titleEl.value.trim(),
+      desc: descEl.value.trim(),
+      tech: techEl.value,
+      link: linkEl.value.trim()
     };
     saveProject(id, data);
   };
@@ -251,14 +341,14 @@
     state.skills.forEach(function (cat, idx) {
       html += '<div class="skill-group">';
       if (editingSection === 'skills') {
-        html += '<input type="text" class="skill-cat-input" value="' + esc(cat.category) + '" onchange="__renameSkillCategory(' + idx + ', this.value)">';
+        html += '<input type="text" class="skill-cat-input" value="' + esc(cat.category) + '" onchange="__renameSkillCategory(' + idx + ', this.value)" oninput="__renameSkillCategory(' + idx + ', this.value)">';
         html += '<div class="tag-row" style="margin-top:12px;">';
         cat.items.forEach(function (item, i2) {
           html += '<span class="tag removable">' + esc(item) + ' <span class="rm" onclick="__removeSkillItem(' + idx + ',' + i2 + ')">&times;</span></span>';
         });
         html += '</div>';
         html += '<div style="display:flex;gap:8px;margin-top:10px;">' +
-          '<input type="text" placeholder="Add skill" id="new-skill-' + idx + '" style="max-width:220px;">' +
+          '<input type="text" placeholder="Add skill" id="new-skill-' + idx + '" style="max-width:220px;" onkeydown="if(event.key===\'Enter\'){ event.preventDefault(); __addSkillItem(' + idx + ', this); }">' +
           '<button class="mini-btn" onclick="__addSkillItem(' + idx + ', document.getElementById(\'new-skill-' + idx + '\'))">Add</button>' +
           '<button class="mini-btn danger" onclick="__removeSkillCategory(' + idx + ')">Remove</button>' +
           '</div>';
@@ -280,7 +370,7 @@
       html += '<label>Tagline</label><input type="text" id="about-role" value="' + esc(state.role) + '">';
       html += '<label>About text</label><textarea id="about-text">' + esc(state.about) + '</textarea>';
       html += '<div class="save-row">' +
-        '<button class="btn btn-solid-light" onclick="__saveAbout(document.getElementById(\'about-text\').value, document.getElementById(\'about-role\').value)">Save</button>' +
+        '<button class="btn btn-solid-light" onclick="__submitAboutForm()">Save</button>' +
         '<button class="btn btn-ghost-light" onclick="__setEditing(null)">Cancel</button>' +
         '</div>';
     } else {
@@ -316,11 +406,16 @@
     return html;
   }
   window.__submitContact = function () {
+    var emailEl = document.getElementById('c-email');
+    var githubEl = document.getElementById('c-github');
+    var linkedinEl = document.getElementById('c-linkedin');
+    var resumeEl = document.getElementById('c-resume');
+    if (!emailEl) return;
     saveContact({
-      email: document.getElementById('c-email').value.trim(),
-      github: document.getElementById('c-github').value.trim(),
-      linkedin: document.getElementById('c-linkedin').value.trim(),
-      resume: document.getElementById('c-resume').value.trim()
+      email: emailEl.value.trim(),
+      github: githubEl.value.trim(),
+      linkedin: linkedinEl.value.trim(),
+      resume: resumeEl.value.trim()
     });
   };
 
@@ -331,8 +426,8 @@
         '<div class="modal">' +
         '<h3>Set up admin access</h3>' +
         '<p class="hint">Choose a password to protect editing. This is a light gate for a personal site, not bank-grade security — don\'t reuse an important password here.</p>' +
-        '<label>New password</label><input type="password" id="setup-pass">' +
-        '<label>Confirm password</label><input type="password" id="setup-confirm">' +
+        '<label>New password</label><input type="password" id="setup-pass" onkeydown="if(event.key===\'Enter\') document.getElementById(\'setup-confirm\').focus()">' +
+        '<label>Confirm password</label><input type="password" id="setup-confirm" onkeydown="if(event.key===\'Enter\') __handleSetup(document.getElementById(\'setup-pass\').value, this.value)">' +
         '<div class="err" id="modal-err"></div>' +
         '<div class="save-row">' +
         '<button class="btn btn-solid-light" onclick="__handleSetup(document.getElementById(\'setup-pass\').value, document.getElementById(\'setup-confirm\').value)">Create password</button>' +
@@ -370,8 +465,13 @@
     return html;
   }
 
+  function isRevealed(id) {
+    return hasLoadedInitial || revealedSections[id];
+  }
+
   function render() {
     var app = document.getElementById('app');
+    if (!app) return;
     app.className = '';
     var html = '';
 
@@ -386,10 +486,10 @@
       '</div>' +
       '</section>';
 
-    html += '<section class="sec dark-alt reveal" id="about"><div class="sec-inner">' + renderAbout() + '</div></section>';
-    html += '<section class="sec dark reveal" id="skills"><div class="sec-inner">' + renderSkills() + '</div></section>';
-    html += '<section class="sec dark-alt reveal" id="projects"><div class="sec-inner">' + renderProjects() + '</div></section>';
-    html += '<section class="sec dark reveal" id="contact"><div class="sec-inner">' + renderContact() + '</div></section>';
+    html += '<section class="sec dark-alt reveal' + (isRevealed('about') ? ' in' : '') + '" id="about"><div class="sec-inner">' + renderAbout() + '</div></section>';
+    html += '<section class="sec dark reveal' + (isRevealed('skills') ? ' in' : '') + '" id="skills"><div class="sec-inner">' + renderSkills() + '</div></section>';
+    html += '<section class="sec dark-alt reveal' + (isRevealed('projects') ? ' in' : '') + '" id="projects"><div class="sec-inner">' + renderProjects() + '</div></section>';
+    html += '<section class="sec dark reveal' + (isRevealed('contact') ? ' in' : '') + '" id="contact"><div class="sec-inner">' + renderContact() + '</div></section>';
 
     html += '<footer>Built by ' + esc(state.name) + '</footer>';
     html += renderModal();
@@ -402,16 +502,17 @@
     }
 
     setupDockMagnify();
+    setupScrollSpy();
     setupReveal();
   }
 
-  // ---- Dock magnify (mac dock style, scoped to the dot only so labels never spill out) ----
   function setupDockMagnify() {
     var dock = document.getElementById('dock');
-    if (!dock) return;
-    var dots = Array.prototype.slice.call(dock.querySelectorAll('.dock-dot'));
-    if (window.matchMedia('(hover: none)').matches) return; // skip on touch
+    if (!dock || dock.dataset.magnifySetup) return;
+    dock.dataset.magnifySetup = 'true';
+    if (window.matchMedia('(hover: none)').matches) return;
     dock.addEventListener('mousemove', function (e) {
+      var dots = Array.prototype.slice.call(dock.querySelectorAll('.dock-dot'));
       dots.forEach(function (dot) {
         var rect = dot.getBoundingClientRect();
         var center = rect.top + rect.height / 2;
@@ -421,13 +522,17 @@
       });
     });
     dock.addEventListener('mouseleave', function () {
+      var dots = Array.prototype.slice.call(dock.querySelectorAll('.dock-dot'));
       dots.forEach(function (dot) { dot.style.transform = 'scale(1)'; });
     });
   }
 
-  // ---- Scroll spy ----
   function setupScrollSpy() {
-    var observer = new IntersectionObserver(function (entries) {
+    if (scrollSpyObserver) {
+      scrollSpyObserver.disconnect();
+      scrollSpyObserver = null;
+    }
+    scrollSpyObserver = new IntersectionObserver(function (entries) {
       entries.forEach(function (entry) {
         if (entry.isIntersecting) {
           activeSection = entry.target.id;
@@ -437,21 +542,23 @@
         }
       });
     }, { rootMargin: '-45% 0px -45% 0px' });
+
     SECTIONS.forEach(function (s) {
       var el = document.getElementById(s.id);
-      if (el) observer.observe(el);
+      if (el) scrollSpyObserver.observe(el);
     });
   }
 
-  // ---- Ambient light: cursor parallax + gentle autonomous drift ----
   function setupAmbient() {
+    if (ambientInitialized) return;
+    ambientInitialized = true;
     var blobs = [
       { el: document.querySelector('.blob-a'), depth: 60, driftX: 40, driftY: 30, speed: 0.00021, phase: 0 },
       { el: document.querySelector('.blob-b'), depth: -70, driftX: 35, driftY: 45, speed: 0.00017, phase: 2 },
       { el: document.querySelector('.blob-c'), depth: 45, driftX: 50, driftY: 25, speed: 0.00025, phase: 4 }
     ];
     var glow = document.getElementById('cursor-glow');
-    var mouseX = 0, mouseY = 0; // normalized -1..1
+    var mouseX = 0, mouseY = 0;
     function updateGlow(clientX, clientY) {
       if (!glow) return;
       glow.style.transform = 'translate3d(' + clientX + 'px,' + clientY + 'px,0)';
@@ -485,11 +592,16 @@
     }
     requestAnimationFrame(tick);
   }
+
   function setupReveal() {
     var els = document.querySelectorAll('.reveal:not(.in)');
     var obs = new IntersectionObserver(function (entries) {
       entries.forEach(function (entry) {
-        if (entry.isIntersecting) { entry.target.classList.add('in'); obs.unobserve(entry.target); }
+        if (entry.isIntersecting) {
+          entry.target.classList.add('in');
+          revealedSections[entry.target.id] = true;
+          obs.unobserve(entry.target);
+        }
       });
     }, { threshold: 0.15 });
     els.forEach(function (el) { obs.observe(el); });
