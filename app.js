@@ -19,7 +19,7 @@
 
   var defaultState = {
     name: "P K HARINANDAN",
-    role: "BCA graduate, learning web development and DSA. Open to internship opportunities.",
+    role: "BCA graduate, learning web development and more to increase my knowledge and practical experience. Open to internship opportunities.",
     about: "I'm a BCA graduate building my skills in web development. Right now I'm working through HTML, CSS, JavaScript and Python, and picking up data structures & algorithms along the way. I'm looking for an internship where I can apply what I'm learning, contribute to real projects, and keep growing as a developer.",
     skills: [
       { category: "Languages", items: ["HTML", "CSS", "JavaScript", "Python"] },
