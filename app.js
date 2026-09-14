@@ -182,6 +182,34 @@
   }
   window.__handleSetup = handleSetup;
 
+  async function handleChangePass(currPass, newPass, confirmPass) {
+    var errEl = document.getElementById('modal-err');
+    var hash = await sha256(currPass);
+    var stored = await getAuthHash();
+    if (!stored || hash !== stored) {
+      if (errEl) errEl.textContent = 'Current password is incorrect.';
+      return;
+    }
+    if (!newPass || newPass.length < 4) {
+      if (errEl) errEl.textContent = 'Use at least 4 characters for new password.';
+      return;
+    }
+    if (newPass !== confirmPass) {
+      if (errEl) errEl.textContent = 'New passwords do not match.';
+      return;
+    }
+    var newHash = await sha256(newPass);
+    localStorage.setItem(LOCAL_AUTH_KEY, newHash);
+    try {
+      await AUTH_DOC.set({ hash: newHash });
+    } catch (e) {
+      console.warn('Could not save new password to Firestore (saved locally)', e);
+    }
+    modal = null;
+    render();
+  }
+  window.__handleChangePass = handleChangePass;
+
   function logout() {
     isAdmin = false;
     editingSection = null;
@@ -193,6 +221,10 @@
   window.__logout = logout;
 
   async function openAdmin() {
+    if (isAdmin) {
+      openModal('change_pass');
+      return;
+    }
     var stored = await getAuthHash();
     openModal(stored ? 'login' : 'setup');
   }
@@ -436,6 +468,22 @@
         '</div>' +
         '</div>';
     }
+    if (modal === 'change_pass') {
+      return '<div class="modal-overlay" onclick="if(event.target===this) __closeModal()">' +
+        '<div class="modal">' +
+        '<h3>Change password</h3>' +
+        '<p class="hint">Enter your current password and choose a new password.</p>' +
+        '<label>Current password</label><input type="password" id="curr-pass" onkeydown="if(event.key===\'Enter\') document.getElementById(\'new-pass\').focus()">' +
+        '<label>New password</label><input type="password" id="new-pass" onkeydown="if(event.key===\'Enter\') document.getElementById(\'confirm-new-pass\').focus()">' +
+        '<label>Confirm new password</label><input type="password" id="confirm-new-pass" onkeydown="if(event.key===\'Enter\') __handleChangePass(document.getElementById(\'curr-pass\').value, document.getElementById(\'new-pass\').value, this.value)">' +
+        '<div class="err" id="modal-err"></div>' +
+        '<div class="save-row">' +
+        '<button class="btn btn-solid-light" onclick="__handleChangePass(document.getElementById(\'curr-pass\').value, document.getElementById(\'new-pass\').value, document.getElementById(\'confirm-new-pass\').value)">Update</button>' +
+        '<button class="btn btn-ghost-light" onclick="__closeModal()">Cancel</button>' +
+        '</div>' +
+        '</div>' +
+        '</div>';
+    }
     return '<div class="modal-overlay" onclick="if(event.target===this) __closeModal()">' +
       '<div class="modal">' +
       '<h3>Hari</h3>' +
@@ -459,7 +507,8 @@
     });
     html += '<div class="dock-divider"></div>';
     html += isAdmin
-      ? '<button class="dock-item" onclick="__logout()"><span class="dock-arrow">&#9656;</span><span class="dock-label">Log out</span><span class="dock-dot"></span></button>'
+      ? '<button class="dock-item" onclick="__openAdmin()"><span class="dock-arrow">&#9656;</span><span class="dock-label">Change pass</span><span class="dock-dot"></span></button>' +
+        '<button class="dock-item" onclick="__logout()"><span class="dock-arrow">&#9656;</span><span class="dock-label">Log out</span><span class="dock-dot"></span></button>'
       : '<button class="dock-item" onclick="__openAdmin()"><span class="dock-arrow">&#9656;</span><span class="dock-label">Hari</span><span class="dock-dot"></span></button>';
     html += '</nav>';
     return html;
@@ -497,7 +546,7 @@
     app.innerHTML = html;
 
     if (modal) {
-      var firstInput = document.getElementById('setup-pass') || document.getElementById('login-pass');
+      var firstInput = document.getElementById('setup-pass') || document.getElementById('login-pass') || document.getElementById('curr-pass');
       if (firstInput) firstInput.focus();
     }
 
