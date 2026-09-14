@@ -131,6 +131,16 @@
       .replace(/'/g, '&#39;');
   }
 
+  function ensureUrl(url) {
+    if (!url) return '';
+    url = String(url).trim();
+    if (!url) return '';
+    if (/^(https?:\/\/|mailto:|tel:|\/\/)/i.test(url)) {
+      return url;
+    }
+    return 'https://' + url;
+  }
+
   function scrollTo(id) {
     var el = document.getElementById(id);
     if (el) el.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
@@ -350,7 +360,7 @@
           '<div class="proj-desc">' + esc(p.desc) + '</div>' +
           '<div class="proj-meta">' +
           (p.tech || []).map(function (t) { return '<span class="proj-tech">' + esc(t) + '</span>'; }).join('') +
-          (p.link ? '<a class="proj-link" href="' + esc(p.link) + '" target="_blank" rel="noopener">View project</a>' : '') +
+          (p.link ? '<a class="proj-link" href="' + esc(ensureUrl(p.link)) + '" target="_blank" rel="noopener">View project</a>' : '') +
           '</div>' +
           (isAdmin ? '<div class="proj-actions">' +
             '<button class="mini-btn" onclick="__startEditProject(\'' + p.id + '\')">Edit</button>' +
@@ -426,10 +436,13 @@
         '</div>';
     } else {
       html += '<div class="contact-grid">';
-      if (state.contact.email) html += '<div class="contact-row"><span class="contact-label">Email</span><a href="mailto:' + esc(state.contact.email) + '">' + esc(state.contact.email) + '</a></div>';
-      if (state.contact.github) html += '<div class="contact-row"><span class="contact-label">GitHub</span><a href="' + esc(state.contact.github) + '" target="_blank" rel="noopener">' + esc(state.contact.github) + '</a></div>';
-      if (state.contact.linkedin) html += '<div class="contact-row"><span class="contact-label">LinkedIn</span><a href="' + esc(state.contact.linkedin) + '" target="_blank" rel="noopener">' + esc(state.contact.linkedin) + '</a></div>';
-      if (state.contact.resume) html += '<div class="contact-row"><span class="contact-label">Resume</span><a href="' + esc(state.contact.resume) + '" target="_blank" rel="noopener">View resume</a></div>';
+      if (state.contact.email) {
+        var emailHref = state.contact.email.startsWith('mailto:') ? state.contact.email : 'mailto:' + state.contact.email;
+        html += '<div class="contact-row"><span class="contact-label">Email</span><a href="' + esc(emailHref) + '">' + esc(state.contact.email.replace(/^mailto:/i, '')) + '</a></div>';
+      }
+      if (state.contact.github) html += '<div class="contact-row"><span class="contact-label">GitHub</span><a href="' + esc(ensureUrl(state.contact.github)) + '" target="_blank" rel="noopener">' + esc(state.contact.github) + '</a></div>';
+      if (state.contact.linkedin) html += '<div class="contact-row"><span class="contact-label">LinkedIn</span><a href="' + esc(ensureUrl(state.contact.linkedin)) + '" target="_blank" rel="noopener">' + esc(state.contact.linkedin) + '</a></div>';
+      if (state.contact.resume) html += '<div class="contact-row"><span class="contact-label">Resume</span><a href="' + esc(ensureUrl(state.contact.resume)) + '" target="_blank" rel="noopener">View resume</a></div>';
       if (!state.contact.email && !state.contact.github && !state.contact.linkedin && !state.contact.resume) {
         html += '<div class="empty-state">No contact details added yet' + (isAdmin ? ' — click Edit to add them.' : '.') + '</div>';
       }
